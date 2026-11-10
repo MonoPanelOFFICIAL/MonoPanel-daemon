@@ -1,0 +1,28 @@
+{
+  "name": "monopanel-daemon",
+  "version": "4.0.0",
+  "description": "MonoPanel daemon: one lightweight agent that runs customer servers (Docker, Podman, gVisor/Kata or a native process sandbox) and customer VPSes (Docker) for the MonoPanel panel. State lives in PostgreSQL.",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsc -p tsconfig.json && node dist/index.js",
+    "configure": "node dist/configure.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  },
+  "optionalDependencies": {
+    "ssh2": "^1.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "typescript": "~5.8.2",
+    "@types/pg": "^8.11.10"
+  }
+}
