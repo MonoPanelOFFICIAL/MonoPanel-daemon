@@ -7,6 +7,8 @@ import { startSftp } from './sftp';
 import { sweepOldTransfers } from './transfer';
 import { sweepAll as sweepRecycleBins } from './recycle';
 import { initVps, prebuildVpsImages } from './vps';
+import { startWebProxy, stopWebProxy } from './web';
+import { enabledKinds } from './kinds';
 import { closeState, initState, stateBackend } from './state';
 
 async function main(): Promise<void> {
@@ -29,12 +31,13 @@ async function main(): Promise<void> {
   void sweepBins(); setInterval(sweepBins, 3600_000).unref();
   startSftp();
   const server = startHttp();
+  startWebProxy();
   prebuildVpsImages();
-  const shutdown = (sig: string) => { log.info(`${sig} received, shutting down`); const done = () => void closeState().finally(() => process.exit(0)); server.close(done); setTimeout(() => process.exit(0), 5000).unref(); };
+  const shutdown = (sig: string) => { log.info(`${sig} received, shutting down`); const done = () => { stopWebProxy(); void closeState().finally(() => process.exit(0)); }; server.close(done); setTimeout(() => process.exit(0), 5000).unref(); };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('unhandledRejection', r => log.error('unhandledRejection', String(r)));
-  log.info(`MonoPanel daemon ${config.version} ready (servers: ${rt.name}, ports ${config.portMin}-${config.portMax})`);
+  log.info(`MonoPanel daemon ${config.version} ready (services: ${enabledKinds().join(', ')}; runtime: ${rt.name}; ports ${config.portMin}-${config.portMax})`);
 }
 
 main().catch(e => { console.error('Fatal:', e.message); process.exit(1); });

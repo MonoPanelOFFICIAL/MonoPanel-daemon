@@ -16,6 +16,11 @@ import * as transfer from './transfer';
 import * as addons from './addons';
 import { vpsRuntime } from './vps';
 import { registerVpsRoutes } from './vps/routes';
+import { enabledKinds, isServerKind, needKind, kindEnabled } from './kinds';
+import { registerServiceRoutes } from './services';
+import * as lavalink from './lavalink';
+import { invalidateDomains, validateDomains, webStatus } from './web';
+import * as nodejs from './nodejs';
 
 const num = (v: unknown, min: number, max: number, def: number): number => {
   const n = Number(v);
@@ -36,7 +41,19 @@ function buildSpec(id: string, b: any, prev?: ServerSpec | null): ServerSpec {
   if (startup.length > 4096 || startup.includes('\0')) throw new HttpError(400, 'Invalid startup command');
   const stopCommand = typeof b?.stopCommand === 'string' ? b.stopCommand.slice(0, 128) : prev?.stopCommand ?? 'stop';
   const sftp = b?.sftp !== undefined ? validateSftp(b.sftp) : prev?.sftp || [];
-  return { id, image, startup, stopCommand, env: b?.env !== undefined ? validateEnv(b.env) : prev?.env || {}, ports: b?.ports !== undefined ? validatePorts(b.ports) : prev?.ports || [], limits, sftp };
+  // Hosting kind: sent by the panel, kept when a later update omits it. A kind can never change on an existing server.
+  let kind = prev?.kind;
+  if (b?.kind !== undefined) {
+    if (!isServerKind(b.kind)) throw new HttpError(400, `Unknown hosting kind. Choose one of: bot, nodejs, website, lavalink`);
+    if (prev?.kind && prev.kind !== b.kind) throw new HttpError(409, `This server is a ${prev.kind} server and cannot become ${b.kind}`);
+    if (!prev) needKind(b.kind);                      // refuse NEW servers of a kind this node was not set up for
+    kind = b.kind;
+  } else if (!prev && !kindEnabled('bot')) {
+    throw new HttpError(403, `This node does not host bot servers (NODE_SERVICES=${config.services.join(',')}). The panel must send a kind.`);
+  }
+  const domains = b?.domains !== undefined ? validateDomains(b.domains) : prev?.domains || [];
+  if (domains.length && (kind || 'bot') !== 'website') throw new HttpError(400, 'Domains can only be set on website servers');
+  return { id, kind, domains, image, startup, stopCommand, env: b?.env !== undefined ? validateEnv(b.env) : prev?.env || {}, ports: b?.ports !== undefined ? validatePorts(b.ports) : prev?.ports || [], limits, sftp };
 }
 
 function validateSftp(v: unknown): NonNullable<ServerSpec['sftp']> {
@@ -65,6 +82,7 @@ export function registerRoutes(): void {
       ok: true, daemon: 'monopanel', version: config.version, runtime: rt.name, runtimeInfo: await rt.info(), platform: process.platform, arch: process.arch,
       hostname: os.hostname(), tls: !!config.tlsCert, portRange: [config.portMin, config.portMax],
       features: { servers: true, vps: !!vps },
+      services: enabledKinds(), web: webStatus(),
     };
   });
 
@@ -96,6 +114,7 @@ export function registerRoutes(): void {
   });
 
   registerVpsRoutes();
+  registerServiceRoutes();
 
   // ---- lifecycle -------------------------------------------------------------------------------
   route('PUT', '/v1/servers/:id', async ({ params, body }) => {
@@ -103,6 +122,7 @@ export function registerRoutes(): void {
     const spec = buildSpec(id, body, store.loadSpec(id));
     fsops.ensureVolume(id);
     await store.saveSpec(spec);
+    invalidateDomains();
     await (await getRuntime()).updateLimits(spec).catch(() => undefined);
     return { ok: true, spec };
   });
@@ -115,6 +135,7 @@ export function registerRoutes(): void {
     fs.rmSync(dir, { recursive: true, force: true });
     backup.deleteAllBackups(id); await recycle.removeBin(id);
     await store.deleteSpec(id); await store.clearInstall(id); diskExceeded.delete(id);
+    invalidateDomains(); nodejs.forget(id);
     return { ok: true };
   });
 
@@ -151,6 +172,8 @@ export function registerRoutes(): void {
           const code = await rt.install({ id, dir, image: image || spec.image, script, entrypoint, env }, line => store.setInstall(id, 'installing', line));
           if (code !== 0) throw new Error(`Install script exited with code ${code}`);
         }
+        // A Lavalink server needs an application.yml to start. Write the managed one unless the install script already made a file.
+        if (spec.kind === 'lavalink' && !lavalink.readConfig(id).exists) lavalink.writeSettings(spec, {});
         store.setInstall(id, 'installed', 'Installation complete');
       } catch (e: any) {
         log.warn(`Install failed for ${id}: ${e?.message}`);

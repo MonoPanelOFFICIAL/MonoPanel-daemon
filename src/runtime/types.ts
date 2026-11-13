@@ -10,6 +10,10 @@ export interface ServerSpec {
   env: Record<string, string>;
   ports: PortMap[];
   limits: Limits;
+  /** Hosting kind (bot | nodejs | website | lavalink). Optional: servers created by older panels have none and count as `bot`. */
+  kind?: string;
+  /** Website hosting: host names the built-in proxy routes to this server's first port (verified by the panel). */
+  domains?: string[];
   /** SFTP logins allowed for this server (password hashes only). */
   sftp?: { username: string; hash: string; readOnly: boolean }[];
 }

@@ -1,5 +1,6 @@
 import { config } from '../config';
 import { log } from '../log';
+import { kindEnabled } from '../kinds';
 import { HttpError } from '../safe';
 import { createDockerRuntime } from './docker';
 import { createMockRuntime } from './mock';
@@ -20,6 +21,7 @@ export async function initVps(): Promise<VpsRuntime | null> {
   if (probed) return runtime;
   probed = true;
   const want = config.vps.runtime;
+  if (!kindEnabled('vps')) { log.info('VPS hosting is not part of this node\'s services (NODE_SERVICES), so it stays off'); return null; }
   if (want === 'off') { log.info('VPS hosting is disabled (VPS_RUNTIME=off)'); return null; }
   if (want === 'mock') {
     log.warn('VPS_RUNTIME=mock: simulated VPSes only. Not for production.');

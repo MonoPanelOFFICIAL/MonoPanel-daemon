@@ -1,13 +1,16 @@
-# MonoPanel daemon
+# MonoPanel daemon (v4.1)
 
-One agent per node. It runs customer **servers** (bots, games, apps) and customer **VPSes** for the MonoPanel panel, on one port with one secret. **No npm runtime dependencies**, hardened, and it works on any kind of machine.
+One agent per node. It runs customer **servers** (bots, Node.js apps, websites, Lavalink) and customer **VPSes** for the MonoPanel panel, on one port with one secret. **No npm runtime dependencies**, hardened, and it works on any kind of machine.
 
-| Feature | Needs | Routes |
-|---|---|---|
-| Servers | nothing (Docker, Podman or the native sandbox) | `/v1/servers/*` |
-| VPSes | Docker CLI | `/v1/vps/*` |
+| Feature | Hosting type | Needs | Routes |
+|---|---|---|---|
+| Servers | Bot, Node.js, Lavalink, Website | nothing (Docker, Podman or the native sandbox) | `/v1/servers/*` |
+| Lavalink tools | Lavalink | a Lavalink software image | `/v1/servers/:id/lavalink/*` |
+| Node.js tools | Node.js, Website, Bot | a Node.js software image | `/v1/servers/:id/nodejs/*` |
+| Website proxy | Website | ports 80/443 (optional TLS certs) | built in, see *Website hosting* |
+| VPSes | VPS | Docker CLI | `/v1/vps/*` |
 
-A node without Docker still runs servers; VPS routes answer `501` until Docker is installed.
+**One daemon runs every hosting type.** Which types a node accepts is set with `NODE_SERVICES` (`bot,nodejs,website,lavalink,vps`; empty = all). Which types you *sell* is chosen in the panel under Admin → Hosting Types. A node without Docker still runs servers; VPS routes answer `501` until Docker is installed.
 
 ## Requirements
 Node.js 20+, **a PostgreSQL 12+ database** for the daemon's state (see *Local state*) and (optional) one of: Docker, Podman, or `bubblewrap` for the native sandbox. **VPS hosting needs Docker** (the `docker` CLI). `tar` (and `unzip` for zip extraction) must be installed for backups/extract.
@@ -18,6 +21,8 @@ There is no installer yet. In the panel add the node under **Admin → Nodes** (
 ```sh
 cd daemon && npm install && npm run build && npm run configure -- --panel https://panel.example.com --key <secret> --port 3002 --allow <panel-ip> --database postgres://daemon:<password>@127.0.0.1:5432/monopanel_daemon && npm start
 ```
+
+**Updating:** pull/copy the new daemon files and run the same command again. `configure` keeps your existing `.env` values and only changes what you pass; database changes are additive and applied on start, so running servers are not touched. Add `--services nodejs,lavalink` (any of `bot,nodejs,website,lavalink,vps`) to limit what a node accepts. For website hosting also pass `--web-http 80 --web-https 443 [--cert-dir /etc/letsencrypt/live]`.
 
 If you register the same address in both places the panel uses one shared secret, so you only configure the daemon once. `configure` writes `.env` with mode 600 (add `--vps docker|auto|mock|off` to set `VPS_RUNTIME`, `--database <postgres url>` to set `DATABASE_URL`). Keep the secret private; rotate it from the panel at any time.
 Run it as a dedicated unprivileged user (add that user to the `docker` group for Docker). A systemd unit:
@@ -48,6 +53,19 @@ NoNewPrivileges=true
 
 ## SFTP (optional)
 Set `SFTP_PORT` (or `--sftp 2022` with `configure`) and run `npm install` (installs the optional `ssh2` package). Users log in as `<panel-username>.<server-id8>` with the password they create in the panel. A login only ever sees one server's files; symlinks are not followed, writes respect the disk quota, and shell/exec are refused. Without `ssh2` the daemon logs a warning and runs without SFTP.
+
+## Website hosting
+Website servers get a built-in reverse proxy: requests are routed by `Host` header to the right site (websockets included). Enable it with `WEB_HTTP_PORT=80` and optionally `WEB_HTTPS_PORT=443` (the daemon needs permission to bind those ports, e.g. `setcap 'cap_net_bind_service=+ep' $(which node)`).
+
+| Setting | Meaning |
+|---|---|
+| `WEB_HTTP_PORT` / `WEB_HTTPS_PORT` | `0` = off. Typical: 80 and 443 |
+| `WEB_CERT_DIR` | certbot-layout directory (`<domain>/fullchain.pem` + `privkey.pem`); certificates are picked by SNI |
+| `WEB_ACME_DIR` | webroot for `certbot certonly --webroot -w <dir> -d example.com` |
+| `WEB_FORCE_HTTPS` | redirect HTTP to HTTPS for domains that have a certificate |
+| `WEB_TRUST_PROXY` | IP(s) of a proxy / CDN in front of the daemon, so `X-Forwarded-For` is believed |
+
+Custom domains are verified by the panel (TXT record or CNAME to the site's free subdomain) and pushed to the daemon, which only serves domains it was told about.
 
 ## Node switching and addons
 The panel can move a server between nodes (streamed, checksum-verified, rolled back on failure) and install addon files. Both use signed daemon routes; addon downloads are SSRF-guarded (set `ALLOW_PRIVATE_DOWNLOADS=true` only for testing). `MAX_TRANSFER_MB` caps the compressed size a node will accept.
